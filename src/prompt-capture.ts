@@ -71,6 +71,20 @@ export class PromptCaptures {
 		this.touch(systemPrompt, capture);
 	}
 
+	/**
+	 * Most recently used capture whose portable parts — custom prompt, append text
+	 * and every context file — all appear verbatim in `systemPrompt`. A capture with
+	 * nothing portable never matches: it would fit any prompt at all.
+	 */
+	private findPortableMatch(systemPrompt: string): PromptCapture | undefined {
+		const candidates = [...this.captures.values()].reverse();
+		return candidates.find((capture) => {
+			const parts = [capture.custom, capture.append, ...capture.contextFiles.map((file) => file.content)]
+				.filter((part): part is string => typeof part === "string" && part.length > 0);
+			return parts.length > 0 && parts.every((part) => systemPrompt.includes(part));
+		});
+	}
+
 	/** Exact lookup only. Callers serving a query want `resolveOrDerive`. */
 	resolve(systemPrompt?: string): PromptCapture | undefined {
 		if (!systemPrompt) return undefined;
@@ -130,6 +144,17 @@ export class PromptCaptures {
 			return revived;
 		}
 
+		// Pi re-assembles the system prompt whenever another before_agent_start
+		// handler changes the active tool list (rpiv-ask-user-question strips its tool
+		// in non-UI runs, for one). The key no longer matches, but every portable part
+		// we recorded is still in the prompt verbatim — so the capture is still the
+		// right one. Adopt it under the new key rather than failing the turn.
+		const portable = this.findPortableMatch(systemPrompt);
+		if (portable) {
+			this.touch(systemPrompt, { ...portable, assembledPrompt: systemPrompt });
+			return this.captures.get(systemPrompt);
+		}
+
 		const embedded = this.findInheritedPrompts(systemPrompt, systemPrompt);
 		if (embedded.length === 0) {
 			throw new Error(
@@ -185,6 +210,14 @@ export class PromptCaptures {
 		for (const capture of this.captures.values()) visit(capture);
 		return result;
 	}
+}
+
+const SHARED_CAPTURES_KEY = Symbol.for("claude-bridge:promptCaptures");
+
+/** Isolated agents re-evaluate this module; process-wide state lets the parent stream their captures. */
+export function sharedPromptCaptures(): PromptCaptures {
+	const globals = globalThis as Record<symbol, PromptCaptures | undefined>;
+	return (globals[SHARED_CAPTURES_KEY] ??= new PromptCaptures());
 }
 
 export function projectPromptCapture(

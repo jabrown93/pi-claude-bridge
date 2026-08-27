@@ -2,6 +2,10 @@
 
 ## UNRELEASED
 
+- **Fix: a re-assembled system prompt no longer fails the turn** — when another `before_agent_start` handler changes the active tool list (e.g. `rpiv-ask-user-question` strips its tool in non-UI runs), pi rebuilds the system prompt and the exact capture key no longer matches. `resolveOrDerive` now adopts the most recent capture whose custom prompt, append text and context files all still appear verbatim in the prompt, instead of throwing `prompt-capture: no capture`. Fixes every `pi -p` / subagent turn under such extensions.
+
+- **Fix: isolated subagents can resolve their captured system prompt (issue #64)** — prompt captures now share one bounded process-wide registry across extension module instances.
+
 - **Fix: better isolate AskClaude tool (issue #59)** — AskClaude children no longer inherit the user's `~/.claude` `CLAUDE.md` files or skill listing, and now always get Claude Code's system prompt preset instead of only when pi-side skills exist. Thanks @JAtkinsonKO.
 - **Fix: Bogus debug message about "record count mismatch" after switching providers** — the post-rebuild integrity check did not take `@file` expansion into account when switching providers.
 
