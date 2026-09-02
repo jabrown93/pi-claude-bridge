@@ -46,6 +46,23 @@ export type PromptCaptureDiagnostic = {
 	matches: { key: string; firstDivergent: number }[];
 };
 
+export type PromptRecoverDiagnostic = {
+	/** The rebuilt prompt that matched no key exactly and embedded none, but whose
+	 *  churn-invariant identifying core was found verbatim, so the agent's recorded
+	 *  parts were reused instead of failing the turn. Surfaced because those parts can
+	 *  lag the rebuild by one before_agent_start (skills rediscovered after capture). */
+	systemPrompt: string;
+	anchorKind: string;
+	anchorLength: number;
+	contextFiles: string[];
+	skillCount: number;
+};
+
+/** Below this, an anchor is too short to prove agent identity on its own and is
+ *  ignored — recovery must not hang an agent's whole context on a coincidental
+ *  substring. Pi's <project_context> block clears this even when nearly empty. */
+const MIN_ANCHOR_CHARS = 64;
+
 export class PromptCaptures {
 	private readonly captures = new Map<string, PromptCapture>();
 	/** Invoked with everything that would otherwise be lost when resolution throws,
@@ -55,6 +72,10 @@ export class PromptCaptures {
 	 *  Set by the bridge on the shared instance; tests that want the diagnostic can
 	 *  pass one per instance. */
 	private readonly onDiagnose: (diagnostic: PromptCaptureDiagnostic) => void;
+	/** Invoked when a rebuilt prompt is recovered by its stable anchor rather than
+	 *  throwing. The recovered parts can lag the current turn by one before_agent_start,
+	 *  so the event is surfaced, never silent. Set by the bridge on the shared instance. */
+	private readonly onRecover: (diagnostic: PromptRecoverDiagnostic) => void;
 
 	/** Pi rebuilds prompts when tools change, so retain only recent lookup keys.
 	 *  Inheritance edges hold direct references and survive key eviction.
@@ -65,8 +86,13 @@ export class PromptCaptures {
 	 *  own next turn would be evicted despite being in use. The bound exists only to
 	 *  cap an extension that rebuilds the prompt every turn, which would otherwise
 	 *  grow keys without limit. */
-	constructor(private readonly limit = 256, onDiagnose?: (diagnostic: PromptCaptureDiagnostic) => void) {
+	constructor(
+		private readonly limit = 256,
+		onDiagnose?: (diagnostic: PromptCaptureDiagnostic) => void,
+		onRecover?: (diagnostic: PromptRecoverDiagnostic) => void,
+	) {
 		this.onDiagnose = onDiagnose ?? (() => {});
+		this.onRecover = onRecover ?? (() => {});
 	}
 
 	record(systemPrompt: string, input: PromptCaptureInput): void {
@@ -128,7 +154,14 @@ export class PromptCaptures {
 	 * dropping it would be exactly the silent instruction loss this exists to
 	 * prevent. The descendant is not retained — its key is not ours to own.
 	 *
-	 * Throws when a prompt can be accounted for by neither route. Returning an empty
+	 * A prompt that matches neither exactly nor by embedding, yet carries an agent's
+	 * churn-invariant identifying core verbatim — its <project_context> block or its
+	 * custom/replace prompt — is one pi rebuilt outside before_agent_start (fresh
+	 * skill/resource discovery, a late-registered tool). Recovery reuses that agent's
+	 * recorded parts rather than failing the turn; the recovered skills may lag the
+	 * rebuild by one before_agent_start, so the recovery is surfaced through onRecover.
+	 *
+	 * Throws when a prompt can be accounted for by none of these routes. Returning an empty
 	 * capture instead would hand Claude Code a turn with none of the user's context
 	 * files, skills, custom prompt or append text, and say so only in a debug line —
 	 * silently discarding policy the user wrote down. A failed turn is recoverable;
@@ -154,6 +187,28 @@ export class PromptCaptures {
 
 		const embedded = this.findInheritedPrompts(systemPrompt, systemPrompt);
 		if (embedded.length === 0) {
+			// Third route: pi rebuilt the prompt outside before_agent_start (fresh skill or
+			// resource discovery rewrites the skills section; a late-registered tool rewrites
+			// the tools list), so it is neither an exact key nor embeds one. The rebuild never
+			// touches an agent's identifying core — its <project_context> block or custom/replace
+			// prompt — so a verbatim match there recovers the agent's own recorded parts. Safe
+			// because a different agent's core is never a verbatim substring; the cost is skills
+			// that may lag by one before_agent_start, which the next capture corrects.
+			const recovered = this.recoverByStableAnchor(systemPrompt);
+			if (recovered) {
+				this.onRecover({
+					systemPrompt,
+					anchorKind: recovered.anchorKind,
+					anchorLength: recovered.anchorLength,
+					contextFiles: recovered.capture.contextFiles.map((file) => file.path),
+					skillCount: recovered.capture.skills.length,
+				});
+				// Keep the still-live node warm; the rebuilt prompt is not a key we own, so it is
+				// not recorded — the next before_agent_start re-records the fresh parts.
+				this.touch(recovered.capture.assembledPrompt, recovered.capture);
+				return recovered.capture;
+			}
+
 			const matches = this.closestKnown(systemPrompt);
 			this.onDiagnose({ systemPrompt, matches });
 			throw new Error(
@@ -170,6 +225,33 @@ export class PromptCaptures {
 		// projectCustom substitutes the embedded captures in place and preserves every
 		// byte between and around them.
 		return { assembledPrompt: systemPrompt, custom: systemPrompt, contextFiles: [], skills: [], inherited: embedded };
+	}
+
+	/** Recover a rebuilt prompt by the longest churn-invariant substring pi embeds
+	 *  verbatim and that uniquely identifies an agent: its <project_context> block or
+	 *  its custom/replace prompt. Reuses the recorded parts of the best such match, or
+	 *  returns undefined when nothing clears MIN_ANCHOR_CHARS so the caller throws as
+	 *  before. formatProjectContext reproduces pi's embedded block byte-for-byte, so a
+	 *  substring test is exact, not fuzzy. */
+	private recoverByStableAnchor(
+		systemPrompt: string,
+	): { capture: PromptCapture; anchorKind: string; anchorLength: number } | undefined {
+		let best: { capture: PromptCapture; anchorKind: string; anchorLength: number } | undefined;
+		for (const node of this.reachableCaptures()) {
+			if (node.assembledPrompt === systemPrompt) continue;
+			const candidates: Array<{ kind: string; text?: string }> = [
+				{ kind: "project_context", text: formatProjectContext(node.contextFiles) },
+				{ kind: "custom", text: node.custom },
+			];
+			for (const { kind, text } of candidates) {
+				if (!text || text.length < MIN_ANCHOR_CHARS) continue;
+				if (text.length <= (best?.anchorLength ?? 0)) continue;
+				if (systemPrompt.includes(text)) {
+					best = { capture: node, anchorKind: kind, anchorLength: text.length };
+				}
+			}
+		}
+		return best;
 	}
 
 	get size(): number {

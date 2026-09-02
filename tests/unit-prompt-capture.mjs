@@ -3,6 +3,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { collectPromptSkills, projectPromptCapture, PromptCaptures } from "../src/prompt-capture.js";
+import { formatProjectContext } from "../src/agents-md.js";
 
 const PI_HARNESS = "You are an expert coding assistant operating inside pi. Pi documentation: pi packages (docs/packages.md).";
 const PARENT_KEY = `${PI_HARNESS}\n\n<project_context>raw parent context</project_context>\nCurrent working directory: /parent`;
@@ -257,5 +258,70 @@ describe("PromptCaptures", () => {
 		assert.equal(captures.resolve("b"), undefined);
 		assert.equal(captures.resolve("a").custom, "refreshed");
 		assert.ok(captures.resolve("c") && captures.resolve("d"));
+	});
+
+	it("recovers a rebuilt prompt through its <project_context> anchor when skills churn", () => {
+		const captures = new PromptCaptures();
+		const contextFiles = [{ path: "/AGENTS.md", content: "parent rules that uniquely identify this agent" }];
+		const block = formatProjectContext(contextFiles);
+		const recorded = `${PI_HARNESS}\n\nAvailable tools:\n- read\n\n${block}\n<skills>OLD</skills>\nCurrent working directory: /parent`;
+		captures.record(recorded, capture({ contextFiles, skills: [skill("browser")] }));
+
+		// Same agent, prompt rebuilt: the tools list and skills section changed but the
+		// <project_context> block did not — exactly what fresh resource discovery produces.
+		const rebuilt = `${PI_HARNESS}\n\nAvailable tools:\n- read\n- bash\n\n${block}\n<skills>NEW AND LONGER</skills>\nCurrent working directory: /parent`;
+		assert.equal(captures.resolve(rebuilt), undefined, "precondition: the rebuilt prompt is not a key");
+
+		const recovered = captures.resolveOrDerive(rebuilt);
+		const projected = projectPromptCapture(recovered, { skillReadTool: "mcp" });
+		assert.match(projected, /parent rules that uniquely identify this agent/, "the agent's own AGENTS.md survives");
+		assert.match(projected, /browser/, "and so do its recorded skills");
+		assert.doesNotMatch(projected, /operating inside pi/, "but never pi's harness, which projection replaces");
+	});
+
+	it("refuses a different agent rather than recovering the wrong one", () => {
+		const captures = new PromptCaptures();
+		const alpha = [{ path: "/AGENTS.md", content: "alpha rules for the alpha project only" }];
+		captures.record(`${PI_HARNESS}\n\n${formatProjectContext(alpha)}\nCurrent working directory: /a`, capture({ contextFiles: alpha }));
+
+		const beta = [{ path: "/AGENTS.md", content: "beta rules for a completely different project" }];
+		const other = `${PI_HARNESS}\n\n${formatProjectContext(beta)}\nCurrent working directory: /b`;
+		assert.throws(() => captures.resolveOrDerive(other), /no capture for this .* system prompt/);
+	});
+
+	it("ignores an anchor shorter than the identity floor", () => {
+		const captures = new PromptCaptures();
+		// A four-character custom cannot prove identity, so a coincidental substring must
+		// not resurrect its whole capture.
+		captures.record("recorded-key", capture({ custom: "tiny" }));
+		assert.throws(
+			() => captures.resolveOrDerive("an unrelated prompt that happens to contain tiny somewhere"),
+			/no capture/,
+		);
+	});
+
+	it("surfaces recovery through the onRecover callback", () => {
+		const recovered = [];
+		const captures = new PromptCaptures(64, undefined, (d) => recovered.push(d));
+		const contextFiles = [{ path: "/AGENTS.md", content: "identifying rules long enough to anchor recovery reliably" }];
+		const block = formatProjectContext(contextFiles);
+		captures.record(`head-A\n\n${block}\ntail`, capture({ contextFiles, skills: [skill("browser")] }));
+
+		captures.resolveOrDerive(`head-B changed\n\n${block}\ntail changed`);
+		assert.equal(recovered.length, 1);
+		assert.equal(recovered[0].anchorKind, "project_context");
+		assert.equal(recovered[0].anchorLength, block.length);
+		assert.deepEqual(recovered[0].contextFiles, ["/AGENTS.md"]);
+		assert.equal(recovered[0].skillCount, 1);
+	});
+
+	it("recovers a replace-mode prompt through its custom anchor when the envelope churns", () => {
+		const captures = new PromptCaptures();
+		const custom = `<active_agent name="review"/>\nreview these changes carefully and report only real defects, nothing cosmetic`;
+		captures.record(`${custom}\n\nAvailable tools:\n- read\nCurrent working directory: /x`, capture({ custom }));
+
+		const rebuilt = `${custom}\n\nAvailable tools:\n- read\n- bash\nCurrent working directory: /x`;
+		const recovered = captures.resolveOrDerive(rebuilt);
+		assert.equal(projectPromptCapture(recovered, { skillReadTool: "mcp" }), custom);
 	});
 });

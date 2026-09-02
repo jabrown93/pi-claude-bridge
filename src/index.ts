@@ -861,6 +861,16 @@ const promptCaptures = new PromptCaptures(256, (diagnostic) => {
 			: "no known captures to compare against."
 		) + ` known keys=${diagnostic.matches.length}`,
 	);
+}, (recovered) => {
+	// Recovery forwards recorded parts that may lag the rebuilt prompt by one
+	// before_agent_start, so record it durably (not only under CLAUDE_BRIDGE_DEBUG).
+	diagDump("prompt-capture-recovered", {
+		systemPromptLength: recovered.systemPrompt.length,
+		anchorKind: recovered.anchorKind,
+		anchorLength: recovered.anchorLength,
+		contextFiles: recovered.contextFiles,
+		skillCount: recovered.skillCount,
+	});
 });
 
 /** Whatever a settled session left behind, named in one greppable line.
