@@ -41,6 +41,18 @@ describe("MODELS projection", () => {
 		assert.deepEqual(models.map((m) => m.id), MODEL_IDS_IN_ORDER);
 	});
 
+	it("synthesizes claude-fable-5-1 from claude-fable-5 when pi-ai lacks it", () => {
+		const models = buildModels([mockPiAiModel("claude-fable-5")]);
+		assert.deepEqual(models.map((m) => m.id), ["claude-fable-5-1", "claude-fable-5"]);
+		assert.equal(find(models, "claude-fable-5-1").name, "Claude Fable 5.1");
+	});
+
+	it("prefers pi-ai's own claude-fable-5-1 entry over the clone", () => {
+		const real = { ...mockPiAiModel("claude-fable-5-1"), name: "Real Name" };
+		const models = buildModels([real, mockPiAiModel("claude-fable-5")]);
+		assert.equal(find(models, "claude-fable-5-1").name, "Real Name");
+	});
+
 	it("silently drops IDs missing from pi-ai (no fallback)", () => {
 		// Only haiku present — opus/sonnet vanish from picker.
 		const models = buildModels([mockPiAiModel("claude-haiku-4-5")]);
@@ -94,6 +106,13 @@ describe("Claude Code runtime model policy", () => {
 		assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-opus-4-6", EXTRA), { cliModelId: "claude-opus-4-6[1m]", contextWindow: 1000000 });
 		assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-sonnet-4-6", EXTRA), { cliModelId: "claude-sonnet-4-6[1m]", contextWindow: 1000000 });
 		assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-haiku-4-5", EXTRA), { cliModelId: "claude-haiku-4-5", contextWindow: 200000 });
+	});
+
+	it("Fable requests 1M on every plan", () => {
+		for (const settings of [PRO, MAX, EXTRA]) {
+			assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-fable-5-1", settings), { cliModelId: "claude-fable-5-1[1m]", contextWindow: 1000000 });
+			assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-fable-5", settings), { cliModelId: "claude-fable-5[1m]", contextWindow: 1000000 });
+		}
 	});
 
 	it("unknown model falls back to bare id at 200K", () => {
@@ -163,6 +182,14 @@ describe("resolveModel", () => {
 
 	it("opus shortcut resolves to claude-opus-5 (first opus in order)", () => {
 		assert.equal(resolveModel(models, "opus")?.id, "claude-opus-5");
+	});
+
+	it("fable shortcut resolves to claude-fable-5-1 (first fable in order)", () => {
+		assert.equal(resolveModel(models, "fable")?.id, "claude-fable-5-1");
+	});
+
+	it("exact claude-fable-5 wins over the 5-1 partial match listed first", () => {
+		assert.equal(resolveModel(models, "claude-fable-5")?.id, "claude-fable-5");
 	});
 
 	it("haiku shortcut resolves to claude-haiku-4-5", () => {

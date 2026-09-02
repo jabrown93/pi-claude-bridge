@@ -2,14 +2,27 @@
 // `resolveModel` returns the first partial match, so `opus` resolves to the first-listed opus entry.
 // Extracted from index.ts so tests can import without activating the extension.
 
-export const MODEL_IDS_IN_ORDER = ["claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"];
+export const MODEL_IDS_IN_ORDER = ["claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"];
+
+// Models newer than the installed pi-ai's static catalog, cloned from a
+// same-family entry so the picker can offer them before pi-ai ships metadata.
+const CATALOG_FALLBACKS: Record<string, { cloneOf: string; name: string }> = {
+	"claude-fable-5-1": { cloneOf: "claude-fable-5", name: "Claude Fable 5.1" },
+};
 
 // Project pi-ai's model entries down to the fields pi's registerProvider expects,
-// and keep MODEL_IDS_IN_ORDER ordering. IDs missing from pi-ai are silently dropped.
+// and keep MODEL_IDS_IN_ORDER ordering. IDs missing from pi-ai are silently dropped
+// unless CATALOG_FALLBACKS can synthesize them from a present same-family entry.
 // Context-dependent display labels are applied after plan/long-context config is known.
 export function buildModels<T extends { id: string; [key: string]: any }>(piAiModels: T[]) {
 	return MODEL_IDS_IN_ORDER
-		.map((id) => piAiModels.find((m) => m.id === id))
+		.map((id) => {
+			const found = piAiModels.find((m) => m.id === id);
+			if (found) return found;
+			const fallback = CATALOG_FALLBACKS[id];
+			const base = fallback && piAiModels.find((m) => m.id === fallback.cloneOf);
+			return base ? { ...base, id, name: fallback.name } : undefined;
+		})
 		.filter((m) => m != null)
 		// Forward thinkingLevelMap so pi-ai's per-model overrides (e.g. opus-4-8
 		// mapping xhigh→xhigh and max→max) are visible to the effort lookup.
@@ -53,6 +66,10 @@ export function resolveClaudeCodeRuntimeModel(modelId: string, settings: LongCon
 				contextWindow: useOneM ? ONE_M_CONTEXT : TWO_HUNDRED_K_CONTEXT,
 			};
 		}
+		// Measured on CC 2.1.258 (Max plan): both bare and [1m] ids serve 1M.
+		// CC < 2.1.251 rejects the model outright (API 400), independent of this mapping.
+		case "claude-fable-5-1":
+			return { cliModelId: "claude-fable-5-1[1m]", contextWindow: ONE_M_CONTEXT };
 		case "claude-fable-5":
 			return { cliModelId: "claude-fable-5[1m]", contextWindow: ONE_M_CONTEXT };
 		case "claude-sonnet-5":
@@ -76,7 +93,9 @@ export function claudeCodeModelId(model: { id: string }, settings: LongContextSe
 
 export function resolveModel<T extends { id: string }>(models: T[], input: string): T | undefined {
 	const lower = input.toLowerCase();
-	return models.find((m) => m.id === lower || m.id.includes(lower));
+	// Exact id wins before any partial match: "claude-fable-5" must not resolve
+	// to "claude-fable-5-1" just because the latter is listed first.
+	return models.find((m) => m.id === lower) ?? models.find((m) => m.id.includes(lower));
 }
 
 // Produce the model metadata registered with pi. The registered contextWindow must
