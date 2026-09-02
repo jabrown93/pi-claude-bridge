@@ -363,4 +363,23 @@ describe("PromptCaptures", () => {
 		const recovered = captures.resolveOrDerive(rebuilt);
 		assert.match(projectPromptCapture(recovered, { skillReadTool: "mcp" }), /release-notes writer/);
 	});
+
+	it("refuses recovery when a sibling agent shares the same <project_context> block", () => {
+		const captures = new PromptCaptures();
+		const ctx = [{ path: "/AGENTS.md", content: "shared repo rules that are long enough to clear the identity floor" }];
+		const block = formatProjectContext(ctx);
+		// Two sibling agents in one project: identical <project_context>, different roles, and
+		// neither recorded as embedding the other, so neither is the other's ancestor.
+		const alphaKey = `${PI_HARNESS}\n\n${block}\n<active_agent name="alpha"/>\nalpha does one thing\n<skills>OLD</skills>\nCurrent working directory: /repo`;
+		captures.record(alphaKey, capture({ contextFiles: ctx, custom: `<active_agent name="alpha"/>\nalpha does one thing`, skills: [skill("browser")] }));
+		const betaKey = `${PI_HARNESS}\n\n${block}\n<active_agent name="beta"/>\nbeta does something else entirely and has a longer recorded prompt than alpha does\n<skills>OLD</skills>\nCurrent working directory: /repo`;
+		captures.record(betaKey, capture({ contextFiles: ctx, custom: `<active_agent name="beta"/>\nbeta does something else entirely and has a longer recorded prompt than alpha does`, skills: [skill("review")] }));
+
+		// alpha's prompt is rebuilt (skills churn). The only churn-invariant anchor beta also
+		// carries is the shared project block, so recovery cannot attribute it to one agent and
+		// must throw rather than forward beta's context.
+		const rebuilt = `${PI_HARNESS}\n\n${block}\n<active_agent name="alpha"/>\nalpha does one thing\n<skills>NEW AND LONGER</skills>\nCurrent working directory: /repo`;
+		assert.equal(captures.resolve(rebuilt), undefined, "precondition: the rebuilt prompt is not a key");
+		assert.throws(() => captures.resolveOrDerive(rebuilt), /no capture for this .* system prompt/);
+	});
 });

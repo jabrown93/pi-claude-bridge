@@ -236,12 +236,20 @@ export class PromptCaptures {
 	 *  appear in the child's prompt. Ranking by anchor length alone would then return
 	 *  the parent and silently drop the child's role. The most specific matching node —
 	 *  the longest recorded assembledPrompt — is the agent itself: a genuine parent send
-	 *  never contains a child (children are not embedded upward), so only the true owner
-	 *  and its ancestors match, and the owner is the longest. */
+	 *  never contains a child (children are not embedded upward), so the true owner and
+	 *  the ancestors it embeds are the longest.
+	 *
+	 *  Ancestry ranking cannot disambiguate siblings, though: a <project_context> block is
+	 *  per project, so a sibling agent that shares it also matches without being embedded
+	 *  in the owner, and could win the ranking or lose it to the owner arbitrarily by
+	 *  recorded length. So recovery refuses (returns undefined, caller throws as before)
+	 *  when a match is neither the winner, an ancestor it embeds, nor the same agent
+	 *  re-recorded across skill churn (same churn-invariant identity) — an ambiguous anchor
+	 *  must not forward one agent's context to another. */
 	private recoverByStableAnchor(
 		systemPrompt: string,
 	): { capture: PromptCapture; anchorKind: string; anchorLength: number } | undefined {
-		let best: { capture: PromptCapture; anchorKind: string; anchorLength: number } | undefined;
+		const matches: { capture: PromptCapture; anchorKind: string; anchorLength: number }[] = [];
 		for (const node of this.reachableCaptures()) {
 			if (node.assembledPrompt === systemPrompt) continue;
 			let match: { kind: string; length: number } | undefined;
@@ -249,13 +257,44 @@ export class PromptCaptures {
 				if (match && text.length <= match.length) continue;
 				if (systemPrompt.includes(text)) match = { kind, length: text.length };
 			}
-			if (!match) continue;
-			const moreSpecific = !best
-				|| node.assembledPrompt.length > best.capture.assembledPrompt.length
-				|| (node.assembledPrompt.length === best.capture.assembledPrompt.length && match.length > best.anchorLength);
-			if (moreSpecific) best = { capture: node, anchorKind: match.kind, anchorLength: match.length };
+			if (match) matches.push({ capture: node, anchorKind: match.kind, anchorLength: match.length });
 		}
+		if (matches.length === 0) return undefined;
+
+		const best = matches.reduce((a, b) =>
+			b.capture.assembledPrompt.length > a.capture.assembledPrompt.length
+			|| (b.capture.assembledPrompt.length === a.capture.assembledPrompt.length && b.anchorLength > a.anchorLength)
+				? b : a);
+
+		// Refuse when a match could belong to a different agent the winner does not account
+		// for — a sibling sharing the project block, not an ancestor it embeds or a prior
+		// recording of itself. Forwarding the winner then would hand one agent another's
+		// recorded context; a thrown turn is recoverable, silent cross-contamination is not.
+		const ancestors = this.ancestorsOf(best.capture);
+		const bestIdentity = recoveryIdentity(best.capture);
+		const ambiguous = matches.some(({ capture }) =>
+			capture !== best.capture
+			&& !ancestors.has(capture)
+			&& recoveryIdentity(capture) !== bestIdentity);
+		if (ambiguous) return undefined;
+
 		return best;
+	}
+
+	/** Every capture reachable from `node` through inheritance edges — the parents it
+	 *  embeds, transitively. Used to tell an ancestor a recovery legitimately embeds from
+	 *  an unrelated sibling that merely shares the project block. */
+	private ancestorsOf(node: PromptCapture): Set<PromptCapture> {
+		const ancestors = new Set<PromptCapture>();
+		const visit = (current: PromptCapture): void => {
+			for (const edge of current.inherited) {
+				if (ancestors.has(edge.parent)) continue;
+				ancestors.add(edge.parent);
+				visit(edge.parent);
+			}
+		};
+		visit(node);
+		return ancestors;
 	}
 
 	/** Churn-invariant substrings pi embeds verbatim that identify one agent. Tool-list,
@@ -355,6 +394,14 @@ function outsideInheritedSlices(node: PromptCapture): string[] {
 	}
 	if (cursor < node.custom.length) slices.push(node.custom.slice(cursor));
 	return slices;
+}
+
+/** The churn-invariant parts recovery reuses, joined into a comparison key. Two captures
+ *  with the same identity are one agent re-recorded as its skills churned, not two agents
+ *  to disambiguate, so recovery treats them as one. Skills are excluded on purpose: they
+ *  are what churns, and the recovered set may lag the rebuild by one before_agent_start. */
+function recoveryIdentity(capture: PromptCapture): string {
+	return `${formatProjectContext(capture.contextFiles) ?? ""}\u0000${capture.custom ?? ""}\u0000${capture.append ?? ""}`;
 }
 
 export function projectPromptCapture(
