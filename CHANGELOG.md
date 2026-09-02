@@ -2,7 +2,7 @@
 
 ## UNRELEASED
 
-- **Add: Claude Fable 5.1** — `claude-bridge/claude-fable-5-1` in the model picker, requesting `claude-fable-5-1[1m]` (1M context, measured on CC 2.1.258/Max) from Claude Code. Installed pi-ai static catalogs predating the model get a metadata clone of `claude-fable-5`; once pi-ai ships its own entry, that entry wins. Requires Claude Code >= 2.1.251: the SDK bundled with this package rejects the model (API 400), so set `provider.pathToClaudeCodeExecutable` to an up-to-date `claude` binary until the SDK dependency is bumped.
+- **Add: Claude Fable 5.1** — `claude-bridge/claude-fable-5-1` in the model picker, requesting `claude-fable-5-1[1m]` (1M context, measured on CC 2.1.258/Max) from Claude Code. Installed pi-ai static catalogs predating the model get a metadata clone of `claude-fable-5`; once pi-ai ships its own entry, that entry wins. The Claude Agent SDK is bumped to 0.3.258 because Claude Code versions before 2.1.251 reject this model.
 
 - **Fix: git-status changes no longer bust the prompt cache (issue #73)** — the `claude_code` preset embeds a git-status snapshot in the cached system block, so any git transition (new file, staging, commit) rewrote the whole conversation prefix at cache-write rates. The provider path now sets `includeGitInstructions: false`, stripping the block with no other cost.
 - **Fix: rate-limit warning showed 1% and repeated every request** — the SDK reports `utilization` as a fraction (0.98), but the notification rounded it directly, printing "1% used" at 98% of the window. It now shows true percentages and only re-notifies when usage rises past a new 5% step or the threshold changes, instead of once per request while over the threshold.
