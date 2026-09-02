@@ -109,8 +109,10 @@ describe("Claude Code runtime model policy", () => {
 	});
 
 	it("Fable requests 1M on every plan", () => {
-		assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-fable-5-1", PRO), { cliModelId: "claude-fable-5-1[1m]", contextWindow: 1000000 });
-		assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-fable-5", PRO), { cliModelId: "claude-fable-5[1m]", contextWindow: 1000000 });
+		for (const settings of [PRO, MAX, EXTRA]) {
+			assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-fable-5-1", settings), { cliModelId: "claude-fable-5-1[1m]", contextWindow: 1000000 });
+			assert.deepEqual(resolveClaudeCodeRuntimeModel("claude-fable-5", settings), { cliModelId: "claude-fable-5[1m]", contextWindow: 1000000 });
+		}
 	});
 
 	it("unknown model falls back to bare id at 200K", () => {
@@ -184,6 +186,10 @@ describe("resolveModel", () => {
 
 	it("fable shortcut resolves to claude-fable-5-1 (first fable in order)", () => {
 		assert.equal(resolveModel(models, "fable")?.id, "claude-fable-5-1");
+	});
+
+	it("exact claude-fable-5 wins over the 5-1 partial match listed first", () => {
+		assert.equal(resolveModel(models, "claude-fable-5")?.id, "claude-fable-5");
 	});
 
 	it("haiku shortcut resolves to claude-haiku-4-5", () => {

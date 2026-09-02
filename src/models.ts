@@ -66,6 +66,8 @@ export function resolveClaudeCodeRuntimeModel(modelId: string, settings: LongCon
 				contextWindow: useOneM ? ONE_M_CONTEXT : TWO_HUNDRED_K_CONTEXT,
 			};
 		}
+		// Measured on CC 2.1.258 (Max plan): both bare and [1m] ids serve 1M.
+		// CC < 2.1.251 rejects the model outright (API 400), independent of this mapping.
 		case "claude-fable-5-1":
 			return { cliModelId: "claude-fable-5-1[1m]", contextWindow: ONE_M_CONTEXT };
 		case "claude-fable-5":
@@ -91,7 +93,9 @@ export function claudeCodeModelId(model: { id: string }, settings: LongContextSe
 
 export function resolveModel<T extends { id: string }>(models: T[], input: string): T | undefined {
 	const lower = input.toLowerCase();
-	return models.find((m) => m.id === lower || m.id.includes(lower));
+	// Exact id wins before any partial match: "claude-fable-5" must not resolve
+	// to "claude-fable-5-1" just because the latter is listed first.
+	return models.find((m) => m.id === lower) ?? models.find((m) => m.id.includes(lower));
 }
 
 // Produce the model metadata registered with pi. The registered contextWindow must
