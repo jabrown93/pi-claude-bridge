@@ -324,4 +324,43 @@ describe("PromptCaptures", () => {
 		const recovered = captures.resolveOrDerive(rebuilt);
 		assert.equal(projectPromptCapture(recovered, { skillReadTool: "mcp" }), custom);
 	});
+
+	it("recovers the sub-agent, not its parent, when a rebuilt parent shifts the whole-custom match", () => {
+		const captures = new PromptCaptures();
+		const parentCtx = [{ path: "/AGENTS.md", content: "shared repo rules" }];
+		const parentBlock = formatProjectContext(parentCtx);
+		const parentKey = `${PI_HARNESS}\n\n${parentBlock}\n<skills>PARENT OLD</skills>\nCurrent working directory: /repo`;
+		captures.record(parentKey, capture({ contextFiles: parentCtx, skills: [skill("browser")] }));
+
+		const childSuffix = `\n\n<sub_agent_context>worker: fix the failing test and report only real defects, nothing cosmetic</sub_agent_context>\n<active_agent name="worker"/>`;
+		const childCustom = `${parentKey}${childSuffix}`;
+		const childKey = `${childCustom}\n<skills>CHILD OLD</skills>\nCurrent working directory: /repo`;
+		captures.record(childKey, capture({ custom: childCustom, skills: [skill("review")] }));
+
+		// Rebuild the child prompt: the embedded parent's skills section churned, so neither
+		// parentKey, childKey, nor the whole childCustom is a verbatim substring — but the
+		// parent <project_context> and the child's own <sub_agent_context> are untouched.
+		const rebuiltParent = `${PI_HARNESS}\n\n${parentBlock}\n<skills>PARENT NEW AND LONGER</skills>\nCurrent working directory: /repo`;
+		const rebuilt = `${rebuiltParent}${childSuffix}\n<skills>CHILD NEW</skills>\nCurrent working directory: /repo`;
+		assert.equal(captures.resolve(rebuilt), undefined, "precondition: the rebuilt prompt is not a key");
+
+		const recovered = captures.resolveOrDerive(rebuilt);
+		assert.equal(recovered.assembledPrompt, childKey, "recovers the child capture, not its parent");
+
+		const projected = projectPromptCapture(recovered, { skillReadTool: "mcp" });
+		assert.match(projected, /worker: fix the failing test/, "the child's own role survives");
+		assert.match(projected, /review/, "and the child's own skill");
+		assert.match(projected, /shared repo rules/, "the parent's recorded context is re-embedded");
+		assert.doesNotMatch(projected, /operating inside pi/, "never pi's harness");
+	});
+
+	it("recovers through a stable append when nothing else anchors", () => {
+		const captures = new PromptCaptures();
+		const append = `<role>release-notes writer: summarize merged PRs since the last tag, grouped by area</role>`;
+		captures.record(`${PI_HARNESS}\n\n${append}\n<skills>OLD</skills>\nCurrent working directory: /r`, capture({ append, skills: [skill("browser")] }));
+
+		const rebuilt = `${PI_HARNESS} rebuilt\n\n${append}\n<skills>NEW AND LONGER</skills>\nCurrent working directory: /r`;
+		const recovered = captures.resolveOrDerive(rebuilt);
+		assert.match(projectPromptCapture(recovered, { skillReadTool: "mcp" }), /release-notes writer/);
+	});
 });

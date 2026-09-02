@@ -155,8 +155,9 @@ export class PromptCaptures {
 	 * prevent. The descendant is not retained — its key is not ours to own.
 	 *
 	 * A prompt that matches neither exactly nor by embedding, yet carries an agent's
-	 * churn-invariant identifying core verbatim — its <project_context> block or its
-	 * custom/replace prompt — is one pi rebuilt outside before_agent_start (fresh
+	 * churn-invariant identifying core verbatim — its <project_context> block, its
+	 * custom/replace prompt (or, for a sub-agent, its own slices of that prompt), or a
+	 * stable append — is one pi rebuilt outside before_agent_start (fresh
 	 * skill/resource discovery, a late-registered tool). Recovery reuses that agent's
 	 * recorded parts rather than failing the turn; the recovered skills may lag the
 	 * rebuild by one before_agent_start, so the recovery is surfaced through onRecover.
@@ -227,31 +228,57 @@ export class PromptCaptures {
 		return { assembledPrompt: systemPrompt, custom: systemPrompt, contextFiles: [], skills: [], inherited: embedded };
 	}
 
-	/** Recover a rebuilt prompt by the longest churn-invariant substring pi embeds
-	 *  verbatim and that uniquely identifies an agent: its <project_context> block or
-	 *  its custom/replace prompt. Reuses the recorded parts of the best such match, or
-	 *  returns undefined when nothing clears MIN_ANCHOR_CHARS so the caller throws as
-	 *  before. formatProjectContext reproduces pi's embedded block byte-for-byte, so a
-	 *  substring test is exact, not fuzzy. */
+	/** Recover a rebuilt prompt by a churn-invariant substring pi embeds verbatim that
+	 *  uniquely identifies an agent (see stableAnchors). Returns the recorded parts of
+	 *  the best match, or undefined when nothing anchors so the caller throws as before.
+	 *
+	 *  A sub-agent's override embeds its parent verbatim, so a parent's anchors also
+	 *  appear in the child's prompt. Ranking by anchor length alone would then return
+	 *  the parent and silently drop the child's role. The most specific matching node —
+	 *  the longest recorded assembledPrompt — is the agent itself: a genuine parent send
+	 *  never contains a child (children are not embedded upward), so only the true owner
+	 *  and its ancestors match, and the owner is the longest. */
 	private recoverByStableAnchor(
 		systemPrompt: string,
 	): { capture: PromptCapture; anchorKind: string; anchorLength: number } | undefined {
 		let best: { capture: PromptCapture; anchorKind: string; anchorLength: number } | undefined;
 		for (const node of this.reachableCaptures()) {
 			if (node.assembledPrompt === systemPrompt) continue;
-			const candidates: Array<{ kind: string; text?: string }> = [
-				{ kind: "project_context", text: formatProjectContext(node.contextFiles) },
-				{ kind: "custom", text: node.custom },
-			];
-			for (const { kind, text } of candidates) {
-				if (!text || text.length < MIN_ANCHOR_CHARS) continue;
-				if (text.length <= (best?.anchorLength ?? 0)) continue;
-				if (systemPrompt.includes(text)) {
-					best = { capture: node, anchorKind: kind, anchorLength: text.length };
-				}
+			let match: { kind: string; length: number } | undefined;
+			for (const { kind, text } of this.stableAnchors(node)) {
+				if (match && text.length <= match.length) continue;
+				if (systemPrompt.includes(text)) match = { kind, length: text.length };
 			}
+			if (!match) continue;
+			const moreSpecific = !best
+				|| node.assembledPrompt.length > best.capture.assembledPrompt.length
+				|| (node.assembledPrompt.length === best.capture.assembledPrompt.length && match.length > best.anchorLength);
+			if (moreSpecific) best = { capture: node, anchorKind: match.kind, anchorLength: match.length };
 		}
 		return best;
+	}
+
+	/** Churn-invariant substrings pi embeds verbatim that identify one agent. Tool-list,
+	 *  skill-list, and refinement-overlay churn edit none of them:
+	 *   - project_context: the agent's <project_context> (AGENTS.md) block, which
+	 *     formatProjectContext reproduces byte-for-byte, so the test is exact not fuzzy;
+	 *   - custom: a replace/override prompt in full — also a sub-agent's parent-embedding
+	 *     override when its embedded parent has not itself been rebuilt;
+	 *   - custom_slice: for a sub-agent, the runs of its override outside the embedded
+	 *     parent regions — its own <sub_agent_context>/<agent_instructions>, which survive
+	 *     a rebuilt parent that shifts the whole-custom match;
+	 *   - append: a stable appendSystemPrompt when nothing else anchors.
+	 *  Below MIN_ANCHOR_CHARS a substring cannot prove identity on its own and is dropped. */
+	private stableAnchors(node: PromptCapture): { kind: string; text: string }[] {
+		const anchors: { kind: string; text: string }[] = [];
+		const push = (kind: string, text: string | undefined): void => {
+			if (text && text.length >= MIN_ANCHOR_CHARS) anchors.push({ kind, text });
+		};
+		push("project_context", formatProjectContext(node.contextFiles));
+		push("custom", node.custom);
+		for (const slice of outsideInheritedSlices(node)) push("custom_slice", slice);
+		push("append", node.append);
+		return anchors;
 	}
 
 	get size(): number {
@@ -312,6 +339,22 @@ export class PromptCaptures {
 		for (const capture of this.captures.values()) visit(capture);
 		return result;
 	}
+}
+
+/** The runs of `custom` not covered by an inherited (embedded-parent) edge: a
+ *  sub-agent's own instructions, which survive a rebuilt parent embed that shifts the
+ *  whole-`custom` match. Empty when there are no edges — whole `custom` covers that. */
+function outsideInheritedSlices(node: PromptCapture): string[] {
+	if (!node.custom || node.inherited.length === 0) return [];
+	const edges = [...node.inherited].sort((a, b) => a.start - b.start);
+	const slices: string[] = [];
+	let cursor = 0;
+	for (const edge of edges) {
+		if (edge.start > cursor) slices.push(node.custom.slice(cursor, edge.start));
+		cursor = Math.max(cursor, edge.end);
+	}
+	if (cursor < node.custom.length) slices.push(node.custom.slice(cursor));
+	return slices;
 }
 
 export function projectPromptCapture(
