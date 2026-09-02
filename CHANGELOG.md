@@ -2,6 +2,8 @@
 
 ## UNRELEASED
 
+- **Add: Claude Fable 5.1** — `claude-bridge/claude-fable-5-1` in the model picker, requesting `claude-fable-5-1[1m]` (1M context) from Claude Code. Installed pi-ai static catalogs predating the model get a metadata clone of `claude-fable-5`; once pi-ai ships its own entry, that entry wins.
+
 - **Fix: git-status changes no longer bust the prompt cache (issue #73)** — the `claude_code` preset embeds a git-status snapshot in the cached system block, so any git transition (new file, staging, commit) rewrote the whole conversation prefix at cache-write rates. The provider path now sets `includeGitInstructions: false`, stripping the block with no other cost.
 - **Fix: rate-limit warning showed 1% and repeated every request** — the SDK reports `utilization` as a fraction (0.98), but the notification rounded it directly, printing "1% used" at 98% of the window. It now shows true percentages and only re-notifies when usage rises past a new 5% step or the threshold changes, instead of once per request while over the threshold.
 - **Fix: an exhausted Claude subscription never triggered fallback models (issue #58)** — Claude Code words a spent quota as "You're out of extra usage · resets 6:30pm", which names no recognizable symptom, so pi-subagents' `fallbackModels` and similar retry logic read it as a fatal error. A failure preceded by a rate-limit rejection is now labelled as one, with its limit type and reset time. Also fixes the rate-limit notification showing a 1970 reset time.
