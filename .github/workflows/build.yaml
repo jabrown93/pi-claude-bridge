@@ -1,0 +1,49 @@
+---
+name: Build and Lint
+# renovate/** is required because the shared preset automerges most
+# updates by branch (:automergeBranch) rather than by PR, so those
+# branches reach :automergeRequireAllStatusChecks carrying no status
+# checks at all. Renovate then reads the branch as permanently yellow,
+# never automerges, and after prNotPending raises a PR instead -- which
+# is how renovate/lock-file-maintenance produced PRs #33-#36, each
+# merged by hand into an empty commit.
+"on":
+  push:
+    branches: [main, 'renovate/**']
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json engines says ">=20", but @earendil-works/pi-coding-agent
+        # imports globSync from node:fs, which Node 20 does not export -- 20.x
+        # fails 15 unit tests on that import alone. The real floor is 22.
+        node-version: ['22.x', '24.x']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Only the unit suite. `npm test` also runs tests/int-*, which drive a
+      # real Claude Code subprocess against local pi/Claude auth state that
+      # no hosted runner has; those stay a local pre-release gate.
+      - name: Unit tests
+        run: npm run test:unit
