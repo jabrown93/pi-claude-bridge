@@ -2,5 +2,14 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "local>jabrown93/.github:renovate-config"
+  ],
+  "packageRules": [
+    {
+      "description": "pi-coding-agent depends on pi-ai/pi-tui at its own version; bumping one alone nests a second pi-ai copy whose types clash with ours and fails tsc.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@earendil-works/**"],
+      "groupName": "pi monorepo",
+      "groupSlug": "pi-monorepo"
+    }
   ]
 }

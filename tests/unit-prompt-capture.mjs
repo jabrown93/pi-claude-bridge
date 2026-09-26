@@ -383,3 +383,25 @@ describe("PromptCaptures", () => {
 		assert.throws(() => captures.resolveOrDerive(rebuilt), /no capture for this .* system prompt/);
 	});
 });
+
+describe("capture provenance", () => {
+	it("records which boundary last wrote a key", () => {
+		const captures = new PromptCaptures();
+		captures.record("key", capture(), "agent_start");
+
+		assert.equal(captures.resolve("key").source, "agent_start");
+		captures.record("key", capture(), "turn_start");
+		assert.equal(captures.resolve("key").source, "turn_start", "a re-record replaces the earlier source");
+	});
+
+	it("names the closest match's boundary in a throw", () => {
+		const captures = new PromptCaptures();
+		captures.record("prefix-common-THE-REST", capture(), "agent_start");
+
+		assert.throws(
+			() => captures.resolveOrDerive("prefix-common-WHO-ARE-YOU"),
+			/recorded at agent_start/,
+			"the diagnostic must say which boundary last recorded the closest known prompt",
+		);
+	});
+});
