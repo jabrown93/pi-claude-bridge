@@ -2,6 +2,8 @@
 
 ## UNRELEASED
 
+- **Fix: keep Pi dependency versions aligned** — align Pi dev dependencies to 1.2.0 and pin transitive pi-agent-core with an override so lock maintenance cannot introduce an incompatible second pi-ai. Renovate groups the override and Pi dependencies across update types; peer compatibility ranges remain unchanged.
+
 - **Tests: tolerate new Haiku catalog entries** — shortcut assertions follow the newest catalog model and check reversed input order instead of pinning Haiku 4.5.
 
 - **Fix: reject leaked pi harness prompts (issue #88)** — Prompts that somehow still reference pi's harness now fail loudly instead of being forwarded and potentially being billed as extra usage. See note in README.
