@@ -5,7 +5,7 @@
   ],
   "packageRules": [
     {
-      "description": "pi-coding-agent depends on pi-ai/pi-tui at its own version; bumping one alone nests a second pi-ai copy whose types clash with ours and fails tsc.",
+      "description": "Keep pi-agent-core, pi-ai, pi-coding-agent and pi-tui aligned. Explicit dev pins keep lockfile maintenance from upgrading pi-agent-core alone and nesting incompatible pi-ai types.",
       "matchManagers": ["npm"],
       "matchPackageNames": ["@earendil-works/**"],
       "groupName": "pi monorepo",
