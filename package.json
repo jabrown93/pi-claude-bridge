@@ -46,16 +46,16 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "0.135.0",
-    "@earendil-works/pi-ai": "1.3.0",
-    "@earendil-works/pi-coding-agent": "1.3.0",
-    "@earendil-works/pi-tui": "1.3.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
     "@types/node": "24.19.2",
     "tsx": "4.23.15",
     "typebox": "1.4.2",
     "typescript": "7.0.2"
   },
   "overrides": {
-    "@earendil-works/pi-agent-core": "1.3.0"
+    "@earendil-works/pi-agent-core": "1.4.0"
   },
   "pi": {
     "extensions": [
