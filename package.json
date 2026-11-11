@@ -51,7 +51,7 @@
     "@earendil-works/pi-tui": "1.4.0",
     "@types/node": "26.6.6",
     "tsx": "4.23.15",
-    "typebox": "1.4.5",
+    "typebox": "1.4.6",
     "typescript": "7.0.2"
   },
   "overrides": {
